@@ -1,4 +1,4 @@
-package exporter
+package registry
 
 import (
 	"fmt"
@@ -17,12 +17,10 @@ func Ping(url string) (bool, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		bodyBytes, err := io.ReadAll(resp.Body)
+		_, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return false, err
 		}
-		bodyString := string(bodyBytes)
-		fmt.Printf("Ping Check: %s\n", bodyString)
 	}
 	return true, nil
 }

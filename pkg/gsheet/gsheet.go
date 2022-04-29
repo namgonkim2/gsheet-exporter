@@ -1,38 +1,62 @@
-package exporter
+package gsheet
 
 import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"strings"
 
+	"github.com/gsheet-exporter/pkg/logger"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
 )
 
-func openSheet(envs map[string]string) (*sheets.Service, error) {
+type Gsheet struct {
+	GoogleCredentials string
+	SpreadsheetId     string
+	ReadRange         string
+
+	Service *sheets.Service
+}
+
+func NewGsheet(envs map[string]string) (*Gsheet, error) {
+	logger := logger.GetInstance()
 
 	ctx := context.Background()
 	b, err := ioutil.ReadFile(envs["GOOGLE_APPLICATION_CREDENTIALS"])
 	if err != nil {
-		log.Fatalf("Unable to read client secret file: %v", err)
+		logger.Error.Printf("Unable to read client secret file: %v", err)
+		return nil, err
 	}
-
-	// If modifying these scopes, delete your previously saved token.json.
 	config, err := google.JWTConfigFromJSON(b, "https://www.googleapis.com/auth/spreadsheets")
 	if err != nil {
-		log.Fatalf("Unable to parse client secret file to config: %v", err)
+		logger.Error.Printf("Unable to parse client secret file to config: %v", err)
+		return nil, err
 	}
 	client := config.Client(oauth2.NoContext)
 
 	srv, err := sheets.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
-		log.Fatalf("Unable to retrieve Sheets client: %v", err)
+		logger.Error.Printf("Unable to retrieve Sheets client: %v", err)
+		return nil, err
 	}
-	return srv, err
+
+	gsh := &Gsheet{
+		GoogleCredentials: envs["GOOGLE_APPLICATION_CREDENTIALS"],
+		SpreadsheetId:     envs["TARGET_SHEETS"],
+		ReadRange:         envs["TARGET_SHEETS_RANGE"],
+
+		Service: srv,
+	}
+
+	return gsh, nil
+}
+
+func openSheet(envs map[string]string) (*sheets.Service, error) {
+
+	return nil, nil
 }
 
 func SheetRead(envs map[string]string) ([]string, error) {

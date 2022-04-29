@@ -1,4 +1,4 @@
-package exporter
+package registry
 
 import (
 	"encoding/json"
