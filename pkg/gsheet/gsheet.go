@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"strings"
 
 	"github.com/gsheet-exporter/pkg/logger"
@@ -21,11 +22,16 @@ type Gsheet struct {
 	Service *sheets.Service
 }
 
-func NewGsheet(envs map[string]string) (*Gsheet, error) {
+var (
+	imageList       []string // all image list
+	exceptImageList []string // export false image list
+)
+
+func NewGsheet() (*Gsheet, error) {
+
 	logger := logger.GetInstance()
 
-	ctx := context.Background()
-	b, err := ioutil.ReadFile(envs["GOOGLE_APPLICATION_CREDENTIALS"])
+	b, err := ioutil.ReadFile(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 	if err != nil {
 		logger.Error.Printf("Unable to read client secret file: %v", err)
 		return nil, err
@@ -37,84 +43,57 @@ func NewGsheet(envs map[string]string) (*Gsheet, error) {
 	}
 	client := config.Client(oauth2.NoContext)
 
+	ctx := context.Background()
 	srv, err := sheets.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		logger.Error.Printf("Unable to retrieve Sheets client: %v", err)
 		return nil, err
 	}
 
-	gsh := &Gsheet{
-		GoogleCredentials: envs["GOOGLE_APPLICATION_CREDENTIALS"],
-		SpreadsheetId:     envs["TARGET_SHEETS"],
-		ReadRange:         envs["TARGET_SHEETS_RANGE"],
+	return &Gsheet{
+		GoogleCredentials: os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+		SpreadsheetId:     os.Getenv("TARGET_SHEETS"),
+		ReadRange:         os.Getenv("TARGET_SHEETS_RANGE"),
 
 		Service: srv,
-	}
-
-	return gsh, nil
+	}, nil
 }
 
-func openSheet(envs map[string]string) (*sheets.Service, error) {
+func (gsheet *Gsheet) GetGsheet() ([]string, []string, error) {
 
-	return nil, nil
-}
+	logger := logger.GetInstance()
 
-func SheetRead(envs map[string]string) ([]string, error) {
+	// Instance information set
+	spreadsheetId := gsheet.SpreadsheetId // envs["TARGET_SHEETS"]
+	readRange := strings.Split(gsheet.ReadRange, ",")
+	srv := gsheet.Service
 
-	srv, _ := openSheet(envs)
-
-	// Prints the names and majors of students in a sample spreadsheet:
-	// https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit
-	spreadsheetId := envs["TARGET_SHEETS"]
-	readRange := strings.Split(envs["TARGET_SHEETS_RANGE"], ",")
-	list := []string{}
+	// clear
+	imageList = []string{}
+	exceptImageList = []string{}
 
 	for _, readRangeValue := range readRange {
 		resp, err := srv.Spreadsheets.Values.Get(spreadsheetId, readRangeValue).Do()
 		if err != nil {
-			return []string{}, err
-			// log.Fatalf("Unable to retrieve data from sheet: %v", err)
+			logger.Error.Printf("Unable to retrieve data from sheet: %v", err)
+			return nil, nil, err
 		}
 
-		if len(resp.Values) == 0 {
-			fmt.Println("No data found.")
-		} else {
-			for _, row := range resp.Values {
-				var data = ""
-				var except = ""
-				// Print columns A and E, which correspond to indices row[0] and row[4].
-				// C와 D컬럼의 row 데이터 리스트 중 빈칸이 있으면 pass
-				if len(row) > 0 {
-					// 길이가 2 이상인 경우 -> [이미지명 export값] 보유
-					if len(row) > 1 {
-						except = fmt.Sprint(row[1])
-						// fmt.Println(except)
-						if except != "FALSE" { // export가 false가 아닌 이미지 모두 listup
-							data = fmt.Sprint(row[0])
-							fmt.Println(data)
-							list = append(list, data)
-						}
-					} else { // export가 없으면 true가 default, image listup
-						data = fmt.Sprint(row[0])
-						list = append(list, data)
-					}
-
-				}
-			}
-		}
+		// google sheet read, then build image list func
+		parseImageList(resp)
 	}
-
-	return list, nil
+	return imageList, exceptImageList, nil
 }
 
-func SheetWrite(envs map[string]string) (string, error) {
+func (gsheet *Gsheet) SetGsheet() (string, error) {
 
-	srv, err := openSheet(envs)
+	logger := logger.GetInstance()
 
-	// Prints the names and majors of students in a sample spreadsheet:
-	// https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit
-	spreadsheetId := envs["TARGET_SHEETS"]
+	// Instance information set
+	spreadsheetId := gsheet.SpreadsheetId // envs["TARGET_SHEETS"]
 	writeRange := "unsupported!B8"
+	srv := gsheet.Service
+
 	values := []interface{}{"test write"}
 
 	var vr sheets.ValueRange
@@ -124,9 +103,40 @@ func SheetWrite(envs map[string]string) (string, error) {
 	result := "OK"
 
 	if err != nil {
-		fmt.Printf("Unable to append data to sheet: %v", err)
+		logger.Error.Printf("Unable to append data to sheet: %v", err)
 	}
-	fmt.Println("spreadsheet push ", resp.Header)
+	logger.Info.Println("spreadsheet push ", resp.Header)
 
 	return result, err
+}
+
+func parseImageList(resp *sheets.ValueRange) {
+
+	logger := logger.GetInstance()
+
+	if len(resp.Values) == 0 {
+		logger.Error.Println("No data found.")
+	} else {
+		for _, row := range resp.Values {
+			data := ""
+			except := ""
+			// Print columns A and E, which correspond to indices row[0] and row[4].
+			// C와 D컬럼의 row 데이터 리스트 중 빈칸이 있으면 pass
+			if len(row) > 0 {
+				data = fmt.Sprint(row[0])
+				// 길이가 2 이상인 경우 -> [이미지명 export값] 보유
+				if len(row) > 1 {
+					except = fmt.Sprint(row[1])
+					if except == "FALSE" { // export가 false가 아닌 이미지 모두 listup
+						exceptImageList = append(exceptImageList, data)
+					} else {
+						imageList = append(imageList, data)
+					}
+				} else { // export가 없으면 true가 default, image listup
+					imageList = append(imageList, data)
+				}
+
+			}
+		}
+	}
 }

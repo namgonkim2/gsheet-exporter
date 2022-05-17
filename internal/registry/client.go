@@ -41,7 +41,6 @@ func Catalog(url string) (string, error) {
 			return "", err
 		}
 		bodyString := string(bodyBytes)
-		fmt.Printf("Catalogs: %s\n", bodyString)
 		return bodyString, nil
 	}
 	return "", nil
@@ -63,7 +62,6 @@ func ListTags(url string, image string) (string, error) {
 			return "", err
 		}
 		bodyString := string(bodyBytes)
-		// fmt.Printf("Image Lists: %s", bodyString)
 		return bodyString, nil
 	}
 	return "", nil

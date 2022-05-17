@@ -9,24 +9,24 @@ import (
 
 type Logger struct {
 	Info  *log.Logger
-	Error *log.Logger
 	Warn  *log.Logger
+	Error *log.Logger
 }
 
 var (
-	mylogger *Logger
-	once     sync.Once
+	gsheetExporterLogger *Logger
+	once                 sync.Once
 )
 
 func GetInstance() *Logger {
 	once.Do(func() {
-		mylogger = Create(os.Stdout, os.Stdout, os.Stderr)
+		gsheetExporterLogger = New(os.Stdout, os.Stdout, os.Stderr)
 	})
-	return mylogger
+	return gsheetExporterLogger
 
 }
 
-func Create(infoHandle io.Writer, warnHandle io.Writer, errorHandle io.Writer) *Logger {
+func New(infoHandle io.Writer, warnHandle io.Writer, errorHandle io.Writer) *Logger {
 
 	return &Logger{
 		log.New(infoHandle, "[INFO] ", log.Ldate|log.Ltime|log.Lshortfile),
