@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"os"
 	"strings"
 
 	"github.com/gsheet-exporter/pkg/logger"
@@ -18,27 +17,25 @@ type Gsheet struct {
 	GoogleCredentials string
 	SpreadsheetId     string
 	ReadRange         string
+	WriteRange        string
 
 	Service *sheets.Service
+	Ctx     context.Context
 }
 
 var (
-	imageList       []string // all image list
-	exceptImageList []string // export false image list
+	log = logger.GetInstance()
 )
 
-func NewGsheet() (*Gsheet, error) {
-
-	logger := logger.GetInstance()
-
-	b, err := ioutil.ReadFile(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+func NewGsheet(googleCredentials, spreadsheetId, readRange, writeRange string) (*Gsheet, error) {
+	b, err := ioutil.ReadFile(googleCredentials)
 	if err != nil {
-		logger.Error.Printf("Unable to read client secret file: %v", err)
+		log.Error.Printf("Unable to read client secret file: %v", err)
 		return nil, err
 	}
 	config, err := google.JWTConfigFromJSON(b, "https://www.googleapis.com/auth/spreadsheets")
 	if err != nil {
-		logger.Error.Printf("Unable to parse client secret file to config: %v", err)
+		log.Error.Printf("Unable to parse client secret file to config: %v", err)
 		return nil, err
 	}
 	client := config.Client(oauth2.NoContext)
@@ -46,76 +43,114 @@ func NewGsheet() (*Gsheet, error) {
 	ctx := context.Background()
 	srv, err := sheets.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
-		logger.Error.Printf("Unable to retrieve Sheets client: %v", err)
+		log.Error.Printf("Unable to retrieve Sheets client: %v", err)
 		return nil, err
 	}
 
 	return &Gsheet{
-		GoogleCredentials: os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
-		SpreadsheetId:     os.Getenv("TARGET_SHEETS"),
-		ReadRange:         os.Getenv("TARGET_SHEETS_RANGE"),
+		GoogleCredentials: googleCredentials,
+		SpreadsheetId:     spreadsheetId,
+		ReadRange:         readRange,
+		WriteRange:        writeRange,
 
 		Service: srv,
+		Ctx:     ctx,
 	}, nil
 }
 
+// Read image list in google sheet
 func (gsheet *Gsheet) GetGsheet() ([]string, []string, error) {
 
-	logger := logger.GetInstance()
-
 	// Instance information set
-	spreadsheetId := gsheet.SpreadsheetId // envs["TARGET_SHEETS"]
+	spreadsheetId := gsheet.SpreadsheetId
 	readRange := strings.Split(gsheet.ReadRange, ",")
 	srv := gsheet.Service
 
-	// clear
-	imageList = []string{}
-	exceptImageList = []string{}
+	imageList := []string{}
+	exceptImageList := []string{}
 
 	for _, readRangeValue := range readRange {
 		resp, err := srv.Spreadsheets.Values.Get(spreadsheetId, readRangeValue).Do()
 		if err != nil {
-			logger.Error.Printf("Unable to retrieve data from sheet: %v", err)
+			log.Error.Printf("Unable to retrieve data from sheet: %v", err)
 			return nil, nil, err
 		}
+		// google sheet read, then parse image list func
+		parseImgList, parseExImgList := parseImageList(resp)
 
-		// google sheet read, then build image list func
-		parseImageList(resp)
+		imageList = append(imageList, parseImgList...)
+		exceptImageList = append(exceptImageList, parseExImgList...)
 	}
 	return imageList, exceptImageList, nil
 }
 
-func (gsheet *Gsheet) SetGsheet() (string, error) {
+// Add a new sheet tab in target google sheet
+func (gsheet *Gsheet) AddNewSheet(newSheetTitle string) error {
 
-	logger := logger.GetInstance()
-
-	// Instance information set
-	spreadsheetId := gsheet.SpreadsheetId // envs["TARGET_SHEETS"]
-	writeRange := "unsupported!B8"
+	spreadsheetId := gsheet.SpreadsheetId
 	srv := gsheet.Service
 
-	values := []interface{}{"test write"}
-
-	var vr sheets.ValueRange
-	vr.Values = append(vr.Values, values)
-	resp, err := srv.Spreadsheets.Values.Append(spreadsheetId, writeRange, &vr).ValueInputOption("RAW").Do()
-
-	result := "OK"
-
-	if err != nil {
-		logger.Error.Printf("Unable to append data to sheet: %v", err)
+	reqAddSheet := sheets.Request{
+		AddSheet: &sheets.AddSheetRequest{
+			Properties: &sheets.SheetProperties{
+				Title: newSheetTitle,
+			},
+		},
 	}
-	logger.Info.Println("spreadsheet push ", resp.Header)
 
-	return result, err
+	rb := &sheets.BatchUpdateSpreadsheetRequest{
+		Requests: []*sheets.Request{&reqAddSheet},
+	}
+
+	resp, err := srv.Spreadsheets.BatchUpdate(spreadsheetId, rb).Context(gsheet.Ctx).Do()
+	if err != nil {
+		log.Error.Printf("Can`t add a new sheet: %v", err)
+		return err
+	}
+	log.Info.Println(resp)
+
+	return nil
+
 }
 
-func parseImageList(resp *sheets.ValueRange) {
+// Write to release image list info in target sheet tab
+func (gsheet *Gsheet) SetGsheet(imageList []string) error {
 
-	logger := logger.GetInstance()
+	// Instance information set
+	spreadsheetId := gsheet.SpreadsheetId
+	writeRange := gsheet.WriteRange // "*.tar.gz!B2"
+	srv := gsheet.Service
+
+	values := make([][]interface{}, len(imageList))
+	for idx, v := range imageList {
+		values[idx] = append(values[idx], idx+1)
+		values[idx] = append(values[idx], v)
+	}
+
+	rb := &sheets.BatchUpdateValuesRequest{
+		ValueInputOption: "USER_ENTERED",
+	}
+	rb.Data = append(rb.Data, &sheets.ValueRange{
+		Range:  writeRange,
+		Values: values,
+	})
+
+	resp, err := srv.Spreadsheets.Values.BatchUpdate(spreadsheetId, rb).Context(gsheet.Ctx).Do()
+
+	if err != nil {
+		log.Error.Printf("Unable to append data to sheet: %v", err)
+		return err
+	}
+	log.Info.Println(resp)
+
+	return nil
+}
+
+// Parse two image lists(export option is true or false)
+func parseImageList(resp *sheets.ValueRange) (imageList []string, exceptImageList []string) {
 
 	if len(resp.Values) == 0 {
-		logger.Error.Println("No data found.")
+		log.Info.Println("No data found.")
 	} else {
 		for _, row := range resp.Values {
 			data := ""
@@ -139,4 +174,5 @@ func parseImageList(resp *sheets.ValueRange) {
 			}
 		}
 	}
+	return imageList, exceptImageList
 }

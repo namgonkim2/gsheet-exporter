@@ -4,25 +4,31 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/gsheet-exporter/pkg/logger"
+)
+
+var (
+	log = logger.GetInstance()
 )
 
 // Health check registry server
-func Ping(url string) (bool, error) {
+func Ping(url string) error {
 	srv := fmt.Sprintf("http://%s/v2", url)
 	resp, err := http.Get(srv)
 
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
 		_, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return false, err
+			return err
 		}
 	}
-	return true, nil
+	return nil
 }
 
 // image list(no have image tags)
@@ -56,13 +62,11 @@ func ListTags(url string, image string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK {
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return "", err
-		}
-		bodyString := string(bodyBytes)
-		return bodyString, nil
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
 	}
-	return "", nil
+	bodyString := string(bodyBytes)
+	return bodyString, nil
+
 }

@@ -2,11 +2,10 @@ package skopeo
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
-	"github.com/gsheet-exporter/pkg/command"
+	"github.com/gsheet-exporter/internal/command"
 	"github.com/gsheet-exporter/pkg/logger"
 )
 
@@ -18,22 +17,24 @@ type Skopeo struct {
 	CopyTo string
 }
 
-var (
+const (
 	CHECK      = "skopeo inspect docker://%s"                                                    // image
 	CRED_CHECK = "skopeo inspect --creds=%s docker://%s"                                         // cred , image
 	COPY       = "skopeo copy --dest-tls-verify=false docker://%s docker://%s/%s"                // src_image, dest, dest_image
 	CRED_COPY  = "skopeo copy --src-creds=%s --dest-tls-verify=false docker://%s docker://%s/%s" // src_cred, src_image, dest, dest_image
-	DELETE     = "skopeo delete docker://%s/%s"                                                  // url/image
+	DELETE     = "skopeo delete --tls-verify=false docker://%s/%s"                               // url/image
+)
 
+var (
 	skopeo *Skopeo
 	once   sync.Once
 
-	cmd string
+	log = logger.GetInstance()
 )
 
-func GetInstance() *Skopeo {
+func GetInstance(dockerCred, quayCred, gcrCred, copyTo string) *Skopeo {
 	once.Do(func() {
-		skopeo = New(os.Getenv("DOCKER_CRED"), os.Getenv("QUAY_CRED"), os.Getenv("GCR_CRED"), os.Getenv("REGISTRY_URL"))
+		skopeo = New(dockerCred, quayCred, gcrCred, copyTo)
 	})
 	SetProfiles(skopeo)
 
@@ -67,50 +68,49 @@ func SetProfiles(skopeo *Skopeo) {
 }
 
 func (skopeo *Skopeo) Inspect(image string) error {
-	logger := logger.GetInstance()
+	var cmd string
 	if skopeo.DockerCred == "" {
 		cmd = fmt.Sprintf(CHECK, image)
 	} else {
 		cmd = fmt.Sprintf(CRED_CHECK, skopeo.DockerCred, image)
 	}
-	logger.Info.Println(cmd)
+	log.Info.Println(cmd)
 	output, err := command.Run(cmd)
 	if err != nil {
-		logger.Error.Print(output)
+		log.Error.Print(output)
 		return err
 	}
 	return nil
 }
 
-func (skopeo *Skopeo) Copy(image string) error {
-	logger := logger.GetInstance()
+func (skopeo *Skopeo) Copy(image string) (string, error) {
+	var cmd string
 	if skopeo.DockerCred == "" {
 		cmd = fmt.Sprintf(COPY, image, skopeo.CopyTo, image)
 	} else {
-		cmd = fmt.Sprintf(CRED_COPY, skopeo.DockerCred, image)
+		cmd = fmt.Sprintf(CRED_COPY, skopeo.DockerCred, image, skopeo.CopyTo, image)
 	}
-	logger.Info.Println(cmd)
+	log.Info.Println(cmd)
 	output, err := command.Run(cmd)
 	if err != nil {
-		logger.Error.Print(output)
-		return err
+		log.Error.Print(output)
+		return output, err
 	}
-	return nil
+	return output, nil
 }
 
-func (skopeo *Skopeo) Delete(image string) error {
-	logger := logger.GetInstance()
-	cmd = fmt.Sprintf(DELETE, skopeo.CopyTo, image)
-	logger.Info.Println(cmd)
+func (skopeo *Skopeo) Delete(image string) (string, error) {
+	cmd := fmt.Sprintf(DELETE, skopeo.CopyTo, image)
+	log.Info.Println(cmd)
 	output, err := command.Run(cmd)
 	if err != nil {
 		if strings.Contains(output, "Image may not exist or is not stored with a v2 Schema in a v2 registry") == true {
-			logger.Info.Printf("[%s] Not Exists in Registry", image)
-			return nil
+			log.Info.Printf("[%s] Not Exists in Registry", image)
+			return output, nil
 		} else {
-			logger.Error.Print(output)
-			return err
+			log.Error.Print(output)
+			return output, err
 		}
 	}
-	return nil
+	return output, nil
 }
